@@ -1,0 +1,5 @@
+project('bnc-metadata', 'cpp')
+add_global_arguments('-std=c++14', language : 'cpp')
+boost = dependency('boost', modules : ['filesystem', 'system'])
+pugixml = dependency('pugixml')
+executable('bnc-metadata', 'bnc-metadata.cc', dependencies : [boost, pugixml])
