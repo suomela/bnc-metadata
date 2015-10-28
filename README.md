@@ -29,5 +29,8 @@ Faster:
 Usage
 -----
 
-    ./bnc-metadata BNC-ROOT
+    ./bnc-metadata BNC-DIRECTORY ...
 
+Example:
+
+    ./bnc-metadata ~/bnc/Texts
