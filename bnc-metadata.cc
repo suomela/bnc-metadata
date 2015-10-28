@@ -46,6 +46,11 @@ public:
         if (!stext) {
             return;
         }
+        std::string type = stext.attribute("type").value();
+        if (type == "OTHERSP") {
+            return;
+        }
+        assert(type == "CONVRSN");
         std::string id = root.attribute("xml:id").value();
         assert(id == stem);
         std::cout << stem << "\n\n";
@@ -53,13 +58,13 @@ public:
         assert(head);
         xml_node prof = head.child("profileDesc");
         assert(prof);
-        parse_people(prof.child("particDesc"));
-        parse_settings(prof.child("settingDesc"));
+        parse(people, "person", prof.child("particDesc"));
+        parse(settings, "setting", prof.child("settingDesc"));
     }
 
 private:
-    void parse_people(xml_node parent) {
-        for (xml_node node: parent.children("person")) {
+    void parse(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
+        for (xml_node node: parent.children(label.c_str())) {
             Record p;
             for (xml_attribute attr: node.attributes()) {
                 p.tell(attr.name(), attr.value());
@@ -71,29 +76,18 @@ private:
                 }
                 p.tell(name, child.child_value());
             }
-            std::cout << stem << ": person ";
+            std::cout << stem << ": " << label << ": ";
             p.dump();
-        }
-        std::cout << "\n";
-    }
-
-    void parse_settings(xml_node parent) {
-        for (xml_node node: parent.children("setting")) {
-            Record p;
-            for (xml_attribute attr: node.attributes()) {
-                p.tell(attr.name(), attr.value());
-            }
-            for (xml_node child: node.children()) {
-                std::string name = child.name();
-                p.tell(name, child.child_value());
-            }
-            std::cout << stem << ": setting ";
-            p.dump();
+            assert(p.id.size());
+            assert(people.count(p.id) == 0);
+            target[p.id] = p;
         }
         std::cout << "\n";
     }
 
     const std::string stem;
+    std::map<std::string, Record> people;
+    std::map<std::string, Record> settings;
 };
 
 bool process(const path& p) {
