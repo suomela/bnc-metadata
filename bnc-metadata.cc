@@ -16,6 +16,8 @@ struct Record {
         boost::trim(value);
         if (attr == "xml:id") {
             id = value;
+        } else if (attr == "n") {
+            n = value;
         } else {
             assert(param.count(attr) == 0);
             param[attr] = value;
@@ -31,6 +33,7 @@ struct Record {
     }
 
     std::string id;
+    std::string n;
     std::map<std::string, std::string> param;
 };
 
@@ -53,17 +56,43 @@ public:
         assert(type == "CONVRSN");
         std::string id = root.attribute("xml:id").value();
         assert(id == stem);
-        std::cout << stem << "\n\n";
+        std::cout << stem << "\n";
         xml_node head = root.child("teiHeader");
-        assert(head);
+        xml_node source = head.child("fileDesc").child("sourceDesc");
         xml_node prof = head.child("profileDesc");
-        assert(prof);
-        parse(people, "person", prof.child("particDesc"));
-        parse(settings, "setting", prof.child("settingDesc"));
+        parse_head(recordings, "recording", source.child("recordingStmt"));
+        parse_head(people, "person", prof.child("particDesc"));
+        parse_head(settings, "setting", prof.child("settingDesc"));
+        parse_stext(stext);
     }
 
 private:
-    void parse(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
+    void parse_stext(xml_node stext) {
+        for (xml_node child: stext.children()) {
+            assert(child.name() == "div"s);
+            std::string decls = child.attribute("decls").value();
+            std::string n = child.attribute("n").value();
+            std::string setting;
+            if (decls.size() > 0) {
+                std::vector<std::string> parts;
+                boost::split(parts, decls, boost::is_space());
+                assert(parts.size() == 2);
+                assert(recordings.count(parts[0]) == 1);
+                assert(settings.count(parts[1]) == 1);
+                setting = parts[1];
+            } else {
+                assert(n.size() > 0);
+                if (settings.count(n) == 1) {
+                    setting = n;
+                } else {
+                    std::cerr << stem << ": " << n << ": unknown setting" << std::endl;
+                }
+            }
+        }
+    }
+
+    void parse_head(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
+        assert(parent);
         for (xml_node node: parent.children(label.c_str())) {
             Record p;
             for (xml_attribute attr: node.attributes()) {
@@ -71,21 +100,26 @@ private:
             }
             for (xml_node child: node.children()) {
                 std::string name = child.name();
-                if (name == "dialect") {
-                    name = "dialectDetail";
+                if (name == "dialect"s) {
+                    name = "dialectDetail"s;
                 }
                 p.tell(name, child.child_value());
             }
-            std::cout << stem << ": " << label << ": ";
-            p.dump();
+            // std::cout << stem << ": " << label << ": ";
+            // p.dump();
             assert(p.id.size());
-            assert(people.count(p.id) == 0);
+            assert(target.count(p.id) == 0);
             target[p.id] = p;
+            if (p.n.size()) {
+                assert(target.count(p.n) == 0);
+                target[p.n] = p;
+            }
         }
-        std::cout << "\n";
+        // std::cout << "\n";
     }
 
     const std::string stem;
+    std::map<std::string, Record> recordings;
     std::map<std::string, Record> people;
     std::map<std::string, Record> settings;
 };
