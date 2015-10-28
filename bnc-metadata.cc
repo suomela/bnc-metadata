@@ -1,6 +1,7 @@
 #include <cassert>
 #include <iostream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include <boost/filesystem.hpp>
@@ -26,7 +27,7 @@ struct Record {
 
     void dump() {
         std::cout << id << ":";
-        for (auto p: param) {
+        for (auto p : param) {
             std::cout << " " << p.first << "=" << p.second;
         }
         std::cout << "\n";
@@ -68,37 +69,67 @@ public:
 
 private:
     void parse_stext(xml_node stext) {
-        for (xml_node child: stext.children()) {
-            assert(child.name() == "div"s);
-            std::string decls = child.attribute("decls").value();
-            std::string n = child.attribute("n").value();
-            std::string setting;
-            if (decls.size() > 0) {
-                std::vector<std::string> parts;
-                boost::split(parts, decls, boost::is_space());
-                assert(parts.size() == 2);
-                assert(recordings.count(parts[0]) == 1);
-                assert(settings.count(parts[1]) == 1);
-                setting = parts[1];
+        for (xml_node rec : stext.children()) {
+            assert(rec.name() == "div"s);
+            parse_rec(rec);
+        }
+    }
+
+    void parse_rec(xml_node rec) {
+        std::string decls = rec.attribute("decls").value();
+        std::string n = rec.attribute("n").value();
+        std::string setting;
+        if (decls.size() > 0) {
+            std::vector<std::string> parts;
+            boost::split(parts, decls, boost::is_space());
+            assert(parts.size() == 2);
+            assert(recordings.count(parts[0]) == 1);
+            assert(settings.count(parts[1]) == 1);
+            setting = parts[1];
+        } else {
+            assert(n.size() > 0);
+            if (settings.count(n) == 1) {
+                setting = n;
             } else {
-                assert(n.size() > 0);
-                if (settings.count(n) == 1) {
-                    setting = n;
-                } else {
-                    std::cerr << stem << ": " << n << ": unknown setting" << std::endl;
-                }
+                std::cerr << stem << ": " << n << ": unknown setting" << std::endl;
             }
         }
+
+        for (xml_node u : rec.children()) {
+            assert(u.name() == "u"s);
+            parse_u(setting, u);
+        }
+    }
+
+    void parse_u(std::string setting, xml_node u) {
+        std::string who = u.attribute("who").value();
+        assert(who.size() > 0);
+        std::string person;
+        if (people.count(who) == 1) {
+            person = who;
+        } else if (unknown_people.count(who) == 0) {
+            unknown_people.insert(who);
+            std::cerr << stem << ": " << who << ": unknown person" << std::endl;
+        }
+
+        for (xml_node s : u.children("s")) {
+            parse_s(setting, person, s);
+        }
+    }
+
+    void parse_s(std::string setting, std::string person, xml_node s) {
+        std::string n = s.attribute("n").value();
+        std::cout << stem << " " << n << " " << setting << " " << person << "\n";
     }
 
     void parse_head(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
         assert(parent);
-        for (xml_node node: parent.children(label.c_str())) {
+        for (xml_node node : parent.children(label.c_str())) {
             Record p;
-            for (xml_attribute attr: node.attributes()) {
+            for (xml_attribute attr : node.attributes()) {
                 p.tell(attr.name(), attr.value());
             }
-            for (xml_node child: node.children()) {
+            for (xml_node child : node.children()) {
                 std::string name = child.name();
                 if (name == "dialect"s) {
                     name = "dialectDetail"s;
@@ -122,6 +153,7 @@ private:
     std::map<std::string, Record> recordings;
     std::map<std::string, Record> people;
     std::map<std::string, Record> settings;
+    std::set<std::string> unknown_people;
 };
 
 bool process(const path& p) {
