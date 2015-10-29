@@ -234,11 +234,21 @@ public:
     }
 
     void store(Db& db) {
+        std::vector<std::pair<std::string, std::string>> setting_person;
         for (std::string setting : seen_settings) {
             if (!settings.count(setting)) {
                 std::cerr << stem << ": " << setting << ": unknown setting" << std::endl;
             }
             settings[setting].store(db, stem, "setting", "settingid", setting);
+            std::string who = settings[setting].param["who"];
+            if (who.size()) {
+                std::vector<std::string> who_l;
+                boost::split(who_l, who, boost::is_space());
+                for (auto person : who_l) {
+                    setting_person.push_back(std::make_pair(setting, person));
+                    seen_people.insert(person);
+                }
+            }
         }
         for (std::string person : seen_people) {
             if (!people.count(person)) {
