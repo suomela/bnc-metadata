@@ -7,10 +7,146 @@
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 #include <pugixml.hpp>
+#include <sqlite3.h>
 
 using namespace std::string_literals;
 using namespace boost::filesystem;
 using namespace pugi;
+
+
+struct DbError {
+    DbError(std::string msg_) : msg{msg_} {}
+    const std::string msg;
+
+    std::string what() const {
+        return msg;
+    }
+};
+
+
+class DbStmt {
+public:
+    DbStmt(std::string sql_, sqlite3* db_) : sql{sql_}, db{db_}
+    {
+        stmt = NULL;
+        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL)) {
+            error();
+        }
+        bind_index = 1;
+    }
+
+    ~DbStmt() {
+        if (sqlite3_finalize(stmt)) {
+            error();
+        }
+    }
+
+    void exec() {
+        int result = sqlite3_step(stmt);
+        if (result == SQLITE_DONE) {
+            // success
+        } else if (result == SQLITE_ROW) {
+            error("too many rows available");
+        } else {
+            error();
+        }
+    }
+
+    DbStmt& bind(std::string v) {
+        if (sqlite3_bind_text(stmt, bind_index, v.c_str(), -1, SQLITE_TRANSIENT)) {
+            error();
+        }
+        ++bind_index;
+        return *this;
+    }
+
+    DbStmt& bind(int v) {
+        if (sqlite3_bind_int(stmt, bind_index, v)) {
+            error();
+        }
+        ++bind_index;
+        return *this;
+    }
+
+private:
+    void error() {
+        error(sqlite3_errmsg(db));
+    }
+
+    void error(std::string msg) {
+        throw DbError(msg + " -- statement: " + sql);
+    }
+
+    std::string sql;
+    int bind_index;
+    sqlite3_stmt *stmt;
+    sqlite3* db;
+};
+
+
+class Db {
+public:
+    Db(std::string filename_, int flags) : filename{filename_}
+    {
+        db = NULL;
+        if (sqlite3_open_v2(filename.c_str(), &db, flags, NULL)) {
+            error();
+        }
+    }
+
+    ~Db() {
+        if (sqlite3_close(db)) {
+            error();
+        }
+    }
+
+    DbStmt prepare(std::string sql) {
+        return DbStmt(sql, db);
+    }
+
+    void exec(std::string sql) {
+        prepare(sql).exec();
+    }
+
+private:
+    void error() {
+        throw DbError(filename + ": " + sqlite3_errmsg(db));
+    }
+
+    const std::string filename;
+    sqlite3* db;
+};
+
+
+void create_db(Db& db) {
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS person ("
+            "fileid TEXT NOT NULL,"
+            "personid TEXT NOT NULL,"
+            "ageGroup TEXT,"
+            "age TEXT,"
+            "dialect TEXT,"
+            "dialectDetail TEXT,"
+            "role TEXT,"
+            "sex TEXT,"
+            "occupation TEXT,"
+            "soc TEXT,"
+            "persName TEXT,"
+            "PRIMARY KEY (fileid, personid)"
+        ")"
+    );
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS setting ("
+            "fileid TEXT NOT NULL,"
+            "settingid TEXT NOT NULL,"
+            "activity TEXT,"
+            "locale TEXT,"
+            "placeName TEXT,"
+            "who TEXT,"
+            "PRIMARY KEY (fileid, settingid)"
+        ")"
+    );
+}
 
 struct Record {
     void tell(std::string attr, std::string value) {
@@ -33,10 +169,40 @@ struct Record {
         std::cout << "\n";
     }
 
+    void store(Db& db, std::string stem, std::string table, std::string column, std::string key) {
+        std::vector<std::string> columns;
+        std::vector<std::string> values;
+        columns.push_back("fileid");
+        values.push_back(stem);
+        columns.push_back(column);
+        values.push_back(key);
+        for (auto p : param) {
+            columns.push_back(p.first);
+            values.push_back(p.second);
+        }
+        std::string sql = "INSERT INTO "s + table;
+        sql += " (" + boost::algorithm::join(columns, ", ") + ")";
+        sql += " VALUES (";
+        for (int i = 0; i < columns.size(); ++i) {
+            if (i) {
+                sql += ",?";
+            } else {
+                sql += "?";
+            }
+        }
+        sql += ")";
+        DbStmt stmt = db.prepare(sql);
+        for (auto v : values) {
+            stmt.bind(v);
+        }
+        stmt.exec();
+    }
+
     std::string id;
     std::string n;
     std::map<std::string, std::string> param;
 };
+
 
 class File {
 public:
@@ -67,6 +233,21 @@ public:
         parse_stext(stext);
     }
 
+    void store(Db& db) {
+        for (std::string setting : seen_settings) {
+            if (!settings.count(setting)) {
+                std::cerr << stem << ": " << setting << ": unknown setting" << std::endl;
+            }
+            settings[setting].store(db, stem, "setting", "settingid", setting);
+        }
+        for (std::string person : seen_people) {
+            if (!people.count(person)) {
+                std::cerr << stem << ": " << person << ": unknown person" << std::endl;
+            }
+            people[person].store(db, stem, "person", "personid", person);
+        }
+    }
+
 private:
     void parse_stext(xml_node stext) {
         for (xml_node rec : stext.children()) {
@@ -88,11 +269,7 @@ private:
             setting = parts[1];
         } else {
             assert(n.size() > 0);
-            if (settings.count(n) == 1) {
-                setting = n;
-            } else {
-                std::cerr << stem << ": " << n << ": unknown setting" << std::endl;
-            }
+            setting = n;
         }
 
         for (xml_node u : rec.children()) {
@@ -104,22 +281,15 @@ private:
     void parse_u(std::string setting, xml_node u) {
         std::string who = u.attribute("who").value();
         assert(who.size() > 0);
-        std::string person;
-        if (people.count(who) == 1) {
-            person = who;
-        } else if (unknown_people.count(who) == 0) {
-            unknown_people.insert(who);
-            std::cerr << stem << ": " << who << ": unknown person" << std::endl;
-        }
-
         for (xml_node s : u.children("s")) {
-            parse_s(setting, person, s);
+            parse_s(setting, who, s);
         }
     }
 
-    void parse_s(std::string setting, std::string person, xml_node s) {
+    void parse_s(std::string setting, std::string who, xml_node s) {
         std::string n = s.attribute("n").value();
-        std::cout << stem << " " << n << " " << setting << " " << person << "\n";
+        seen_settings.insert(setting);
+        seen_people.insert(who);
     }
 
     void parse_head(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
@@ -153,10 +323,12 @@ private:
     std::map<std::string, Record> recordings;
     std::map<std::string, Record> people;
     std::map<std::string, Record> settings;
-    std::set<std::string> unknown_people;
+    std::set<std::string> seen_people;
+    std::set<std::string> seen_settings;
 };
 
-bool process(const path& p) {
+
+bool process(Db& db, const path& p) {
     std::string stem = p.stem().string();
     xml_document doc;
     xml_parse_result result = doc.load_file(p.c_str());
@@ -166,12 +338,14 @@ bool process(const path& p) {
     }
     File file(stem);
     file.parse(doc);
+    file.store(db);
     return true;
 }
 
-bool process_all(const path& p) {
+
+bool process_all(Db& db, const path& p) {
     if (p.has_extension() && p.extension().string() == ".xml") {
-        return process(p);
+        return process(db, p);
     } else if (is_directory(p)) {
         bool ok = true;
         std::vector<path> dir;
@@ -180,7 +354,7 @@ bool process_all(const path& p) {
         }
         std::sort(dir.begin(), dir.end());
         for (auto& f : dir) {
-            if (!process_all(f)) {
+            if (!process_all(db, f)) {
                 ok = false;
             }
         }
@@ -190,17 +364,24 @@ bool process_all(const path& p) {
     }
 }
 
+
 int main(int argc, const char** argv) {
     if (argc == 1) {
         std::cout << "usage: bnc-metadata BNC-DIRECTORY ..." << std::endl;
         exit(1);
     }
     try {
+        Db db("bnc.db", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        create_db(db);
         for (int i = 1; i < argc; ++i) {
-            process_all(argv[i]);
+            process_all(db, argv[i]);
         }
     }
     catch (filesystem_error e) {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
+    catch (DbError e) {
         std::cerr << e.what() << std::endl;
         exit(1);
     }
