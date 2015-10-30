@@ -1,28 +1,23 @@
 bnc-metadata
 ============
 
+Extract detailed metadata from the spoken parts of BNC.
+
+
 Dependencies
 ------------
 
-http://mesonbuild.com/ and
+Install http://mesonbuild.com/ and
 
     brew install boost pugixml ninja
+
 
 Compilation
 -----------
 
-Debugging:
-
     mkdir build
     BOOST_ROOT="/usr/local" meson build
     cd build
-    ninja
-
-Faster:
-
-    mkdir build-opt
-    BOOST_ROOT="/usr/local" meson --buildtype=debugoptimized build-opt
-    cd build-opt
     ninja
 
 
@@ -33,4 +28,8 @@ Usage
 
 Example:
 
-    ./bnc-metadata ~/bnc/Texts
+    ./bnc-metadata ~/bnc/Texts/K
+
+This will create the following SQLite datase:
+
+    bnc.db
