@@ -50,6 +50,10 @@ public:
         } else {
             error();
         }
+        if (sqlite3_reset(stmt)) {
+            error();
+        }
+        bind_index = 1;
     }
 
     DbStmt& bind(std::string v) {
@@ -120,7 +124,7 @@ private:
 
 void create_db(Db& db) {
     db.exec(
-        "CREATE TABLE IF NOT EXISTS person ("
+        "CREATE TABLE bnc_person ("
             "fileid TEXT NOT NULL,"
             "personid TEXT NOT NULL,"
             "ageGroup TEXT,"
@@ -136,7 +140,7 @@ void create_db(Db& db) {
         ")"
     );
     db.exec(
-        "CREATE TABLE IF NOT EXISTS setting ("
+        "CREATE TABLE bnc_setting ("
             "fileid TEXT NOT NULL,"
             "settingid TEXT NOT NULL,"
             "activity TEXT,"
@@ -144,6 +148,16 @@ void create_db(Db& db) {
             "placeName TEXT,"
             "who TEXT,"
             "PRIMARY KEY (fileid, settingid)"
+        ")"
+    );
+    db.exec(
+        "CREATE TABLE bnc_setting_person ("
+            "fileid TEXT NOT NULL,"
+            "settingid TEXT NOT NULL,"
+            "personid TEXT NOT NULL,"
+            "PRIMARY KEY (fileid, personid, settingid),"
+            "FOREIGN KEY (fileid, settingid) REFERENCES bnc_person(fileid, settingid),"
+            "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
         ")"
     );
 }
@@ -239,7 +253,7 @@ public:
             if (!settings.count(setting)) {
                 std::cerr << stem << ": " << setting << ": unknown setting" << std::endl;
             }
-            settings[setting].store(db, stem, "setting", "settingid", setting);
+            settings[setting].store(db, stem, "bnc_setting", "settingid", setting);
             std::string who = settings[setting].param["who"];
             if (who.size()) {
                 std::vector<std::string> who_l;
@@ -254,7 +268,15 @@ public:
             if (!people.count(person)) {
                 std::cerr << stem << ": " << person << ": unknown person" << std::endl;
             }
-            people[person].store(db, stem, "person", "personid", person);
+            people[person].store(db, stem, "bnc_person", "personid", person);
+        }
+        DbStmt stmt = db.prepare(
+            "INSERT INTO bnc_setting_person "
+            "(fileid, settingid, personid)"
+            "VALUES (?,?,?)"
+        );
+        for (const auto& p : setting_person) {
+            stmt.bind(stem).bind(p.first).bind(p.second).exec();
         }
     }
 
@@ -382,10 +404,12 @@ int main(int argc, const char** argv) {
     }
     try {
         Db db("bnc.db", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        db.exec("BEGIN");
         create_db(db);
         for (int i = 1; i < argc; ++i) {
             process_all(db, argv[i]);
         }
+        db.exec("COMMIT");
     }
     catch (filesystem_error e) {
         std::cerr << e.what() << std::endl;
