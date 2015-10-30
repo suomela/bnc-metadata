@@ -37,7 +37,7 @@ public:
 
     ~DbStmt() {
         if (sqlite3_finalize(stmt)) {
-            error();
+            warning();
         }
     }
 
@@ -81,6 +81,10 @@ private:
         throw DbError(msg + " -- statement: " + sql);
     }
 
+    void warning() {
+        std::cerr << sqlite3_errmsg(db) << std::endl;
+    }
+
     std::string sql;
     int bind_index;
     sqlite3_stmt *stmt;
@@ -100,7 +104,7 @@ public:
 
     ~Db() {
         if (sqlite3_close(db)) {
-            error();
+            warning();
         }
     }
 
@@ -115,6 +119,10 @@ public:
 private:
     void error() {
         throw DbError(filename + ": " + sqlite3_errmsg(db));
+    }
+
+    void warning() {
+        std::cerr << filename << ": " << sqlite3_errmsg(db) << std::endl;
     }
 
     const std::string filename;
@@ -156,7 +164,19 @@ void create_db(Db& db) {
             "settingid TEXT NOT NULL,"
             "personid TEXT NOT NULL,"
             "PRIMARY KEY (fileid, personid, settingid),"
-            "FOREIGN KEY (fileid, settingid) REFERENCES bnc_person(fileid, settingid),"
+            "FOREIGN KEY (fileid, settingid) REFERENCES bnc_setting(fileid, settingid),"
+            "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
+        ")"
+    );
+    db.exec(
+        "CREATE TABLE bnc_s ("
+            "fileid TEXT NOT NULL,"
+            "n TEXT NOT NULL,"
+            "personid TEXT NOT NULL,"
+            "settingid TEXT NOT NULL,"
+            "wordcount INTEGER NOT NULL,"
+            "PRIMARY KEY (fileid, n, personid),"
+            "FOREIGN KEY (fileid, settingid) REFERENCES bnc_setting(fileid, settingid),"
             "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
         ")"
     );
@@ -218,6 +238,18 @@ struct Record {
 };
 
 
+struct Wordcount : public xml_tree_walker {
+    int wc = 0;
+
+    virtual bool for_each(xml_node& node) {
+        if (node.type() == node_element && node.name() == "w"s) {
+            ++wc;
+        }
+        return true;
+    }
+};
+
+
 class File {
 public:
     File(std::string stem_) : stem{stem_}
@@ -248,7 +280,14 @@ public:
     }
 
     void store(Db& db) {
-        std::vector<std::pair<std::string, std::string>> setting_person;
+        store_setting(db);
+        store_person(db);
+        store_setting_person(db);
+        store_s(db);
+    }
+
+private:
+    void store_setting(Db& db) {
         for (std::string setting : seen_settings) {
             if (!settings.count(setting)) {
                 std::cerr << stem << ": " << setting << ": unknown setting" << std::endl;
@@ -264,12 +303,18 @@ public:
                 }
             }
         }
+    }
+
+    void store_person(Db& db) {
         for (std::string person : seen_people) {
-            if (!people.count(person)) {
+            if (!people.count(person) && person != "PS000"s && person != "PS001") {
                 std::cerr << stem << ": " << person << ": unknown person" << std::endl;
             }
             people[person].store(db, stem, "bnc_person", "personid", person);
         }
+    }
+
+    void store_setting_person(Db& db) {
         DbStmt stmt = db.prepare(
             "INSERT INTO bnc_setting_person "
             "(fileid, settingid, personid)"
@@ -280,7 +325,22 @@ public:
         }
     }
 
-private:
+    void store_s(Db& db) {
+        DbStmt stmt = db.prepare(
+            "INSERT INTO bnc_s "
+            "(fileid, n, settingid, personid, wordcount)"
+            "VALUES (?,?,?,?,?)"
+        );
+        for (const auto& t : s_tags) {
+            stmt.bind(stem);
+            stmt.bind(std::get<0>(t));
+            stmt.bind(std::get<1>(t));
+            stmt.bind(std::get<2>(t));
+            stmt.bind(std::get<3>(t));
+            stmt.exec();
+        }
+    }
+
     void parse_stext(xml_node stext) {
         for (xml_node rec : stext.children()) {
             assert(rec.name() == "div"s);
@@ -320,8 +380,13 @@ private:
 
     void parse_s(std::string setting, std::string who, xml_node s) {
         std::string n = s.attribute("n").value();
-        seen_settings.insert(setting);
-        seen_people.insert(who);
+        Wordcount wc;
+        s.traverse(wc);
+        if (wc.wc) {
+            seen_settings.insert(setting);
+            seen_people.insert(who);
+            s_tags.push_back(std::make_tuple(n, setting, who, wc.wc));
+        }
     }
 
     void parse_head(std::map<std::string, Record>& target, std::string label, xml_node parent) const {
@@ -357,6 +422,8 @@ private:
     std::map<std::string, Record> settings;
     std::set<std::string> seen_people;
     std::set<std::string> seen_settings;
+    std::vector<std::pair<std::string, std::string>> setting_person;
+    std::vector<std::tuple<std::string, std::string, std::string, int>> s_tags;
 };
 
 
@@ -404,6 +471,7 @@ int main(int argc, const char** argv) {
     }
     try {
         Db db("bnc.db", SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+        db.exec("PRAGMA foreign_keys = ON");
         db.exec("BEGIN");
         create_db(db);
         for (int i = 1; i < argc; ++i) {
