@@ -73,21 +73,21 @@ public:
     }
 
 private:
-    void error() {
+    void error() const {
         error(sqlite3_errmsg(db));
     }
 
-    void error(std::string msg) {
+    void error(std::string msg) const {
         throw DbError(msg + " -- statement: " + sql);
     }
 
-    void warning() {
+    void warning() const {
         std::cerr << sqlite3_errmsg(db) << std::endl;
     }
 
-    std::string sql;
+    const std::string sql;
     int bind_index;
-    sqlite3_stmt *stmt;
+    sqlite3_stmt* stmt;
     sqlite3* db;
 };
 
@@ -108,20 +108,20 @@ public:
         }
     }
 
-    DbStmt prepare(std::string sql) {
+    DbStmt prepare(std::string sql) const {
         return DbStmt(sql, db);
     }
 
-    void exec(std::string sql) {
+    void exec(std::string sql) const {
         prepare(sql).exec();
     }
 
 private:
-    void error() {
+    void error() const {
         throw DbError(filename + ": " + sqlite3_errmsg(db));
     }
 
-    void warning() {
+    void warning() const {
         std::cerr << filename << ": " << sqlite3_errmsg(db) << std::endl;
     }
 
@@ -195,15 +195,7 @@ struct Record {
         }
     }
 
-    void dump() {
-        std::cout << id << ":";
-        for (auto p : param) {
-            std::cout << " " << p.first << "=" << p.second;
-        }
-        std::cout << "\n";
-    }
-
-    void store(Db& db, std::string stem, std::string table, std::string column, std::string key) {
+    void store(Db& db, std::string stem, std::string table, std::string column, std::string key) const {
         std::vector<std::string> columns;
         std::vector<std::string> values;
         columns.push_back("fileid");
@@ -292,9 +284,11 @@ private:
             if (!settings.count(setting)) {
                 std::cerr << stem << ": " << setting << ": unknown setting" << std::endl;
             }
-            settings[setting].store(db, stem, "bnc_setting", "settingid", setting);
-            std::string who = settings[setting].param["who"];
-            if (who.size()) {
+            const Record& r = settings[setting];
+            r.store(db, stem, "bnc_setting", "settingid", setting);
+            if (r.param.count("who")) {
+                std::string who = r.param.at("who");
+                assert(who.size());
                 std::vector<std::string> who_l;
                 boost::split(who_l, who, boost::is_space());
                 for (auto person : who_l) {
@@ -310,11 +304,12 @@ private:
             if (!people.count(person) && person != "PS000"s && person != "PS001") {
                 std::cerr << stem << ": " << person << ": unknown person" << std::endl;
             }
-            people[person].store(db, stem, "bnc_person", "personid", person);
+            const Record& r = people[person];
+            r.store(db, stem, "bnc_person", "personid", person);
         }
     }
 
-    void store_setting_person(Db& db) {
+    void store_setting_person(Db& db) const {
         DbStmt stmt = db.prepare(
             "INSERT INTO bnc_setting_person "
             "(fileid, settingid, personid)"
@@ -325,7 +320,7 @@ private:
         }
     }
 
-    void store_s(Db& db) {
+    void store_s(Db& db) const {
         DbStmt stmt = db.prepare(
             "INSERT INTO bnc_s "
             "(fileid, n, settingid, personid, wordcount)"
@@ -403,8 +398,6 @@ private:
                 }
                 p.tell(name, child.child_value());
             }
-            // std::cout << stem << ": " << label << ": ";
-            // p.dump();
             assert(p.id.size());
             assert(target.count(p.id) == 0);
             target[p.id] = p;
@@ -413,7 +406,6 @@ private:
                 target[p.n] = p;
             }
         }
-        // std::cout << "\n";
     }
 
     const std::string stem;
