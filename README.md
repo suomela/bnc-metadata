@@ -7,9 +7,8 @@ Extract detailed metadata from the spoken parts of BNC.
 Dependencies
 ------------
 
-Install http://mesonbuild.com/ and
-
-    brew install boost pugixml ninja
+    brew install ninja pkgconfig python3 boost pugixml
+    pip3 install meson
 
 
 Compilation
