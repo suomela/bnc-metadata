@@ -174,7 +174,11 @@ void create_db(Db& db) {
             "n TEXT NOT NULL,"
             "personid TEXT NOT NULL,"
             "settingid TEXT NOT NULL,"
-            "wordcount INTEGER NOT NULL,"
+            "n_w INTEGER NOT NULL,"
+            "n_c INTEGER NOT NULL,"
+            "n_unclear INTEGER NOT NULL,"
+            "n_vocal INTEGER NOT NULL,"
+            "n_gap INTEGER NOT NULL,"
             "PRIMARY KEY (fileid, n, personid),"
             "FOREIGN KEY (fileid, settingid) REFERENCES bnc_setting(fileid, settingid),"
             "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
@@ -231,13 +235,31 @@ struct Record {
 
 
 struct Wordcount : public xml_tree_walker {
-    int wc = 0;
+    int w = 0;
+    int c = 0;
+    int unclear = 0;
+    int vocal = 0;
+    int gap = 0;
 
     virtual bool for_each(xml_node& node) {
-        if (node.type() == node_element && node.name() == "w"s) {
-            ++wc;
+        if (node.type() == node_element) {
+            if (node.name() == "w"s) {
+                ++w;
+            } else if (node.name() == "c"s) {
+                ++c;
+            } else if (node.name() == "unclear"s) {
+                ++unclear;
+            } else if (node.name() == "vocal"s) {
+                ++vocal;
+            } else if (node.name() == "gap"s) {
+                ++gap;
+            }
         }
         return true;
+    }
+
+    bool nonempty() const {
+        return w || c || unclear || vocal || gap;
     }
 };
 
@@ -323,15 +345,20 @@ private:
     void store_s(Db& db) const {
         DbStmt stmt = db.prepare(
             "INSERT INTO bnc_s "
-            "(fileid, n, settingid, personid, wordcount)"
-            "VALUES (?,?,?,?,?)"
+            "(fileid, n, settingid, personid, n_w, n_c, n_unclear, n_vocal, n_gap)"
+            "VALUES (?,?,?,?,?,?,?,?,?)"
         );
         for (const auto& t : s_tags) {
+            const auto& wc = std::get<3>(t);
             stmt.bind(stem);
             stmt.bind(std::get<0>(t));
             stmt.bind(std::get<1>(t));
             stmt.bind(std::get<2>(t));
-            stmt.bind(std::get<3>(t));
+            stmt.bind(wc.w);
+            stmt.bind(wc.c);
+            stmt.bind(wc.unclear);
+            stmt.bind(wc.vocal);
+            stmt.bind(wc.gap);
             stmt.exec();
         }
     }
@@ -377,10 +404,10 @@ private:
         std::string n = s.attribute("n").value();
         Wordcount wc;
         s.traverse(wc);
-        if (wc.wc) {
+        if (wc.nonempty()) {
             seen_settings.insert(setting);
             seen_people.insert(who);
-            s_tags.push_back(std::make_tuple(n, setting, who, wc.wc));
+            s_tags.push_back(std::make_tuple(n, setting, who, wc));
         }
     }
 
@@ -415,7 +442,7 @@ private:
     std::set<std::string> seen_people;
     std::set<std::string> seen_settings;
     std::vector<std::pair<std::string, std::string>> setting_person;
-    std::vector<std::tuple<std::string, std::string, std::string, int>> s_tags;
+    std::vector<std::tuple<std::string, std::string, std::string, Wordcount>> s_tags;
 };
 
 
