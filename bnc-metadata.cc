@@ -184,6 +184,22 @@ void create_db(Db& db) {
             "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
         ")"
     );
+    db.exec(
+        "CREATE TABLE bnc_w ("
+            "fileid TEXT NOT NULL,"
+            "n TEXT NOT NULL,"
+            "personid TEXT NOT NULL,"
+            "wordid INTEGER NOT NULL,"
+            "settingid TEXT NOT NULL,"
+            "hw TEXT NOT NULL,"
+            "c5 TEXT NOT NULL,"
+            "pos TEXT NOT NULL,"
+            "PRIMARY KEY (fileid, n, personid, wordid),"
+            "FOREIGN KEY (fileid, n, personid) REFERENCES bnc_s(fileid, n, personid),"
+            "FOREIGN KEY (fileid, settingid) REFERENCES bnc_setting(fileid, settingid),"
+            "FOREIGN KEY (fileid, personid) REFERENCES bnc_person(fileid, personid)"
+        ")"
+    );
 }
 
 struct Record {
@@ -234,16 +250,29 @@ struct Record {
 };
 
 
+struct Word {
+    std::string hw;
+    std::string c5;
+    std::string pos;
+};
+
 struct Wordcount : public xml_tree_walker {
     int w = 0;
     int c = 0;
     int unclear = 0;
     int vocal = 0;
     int gap = 0;
+    std::vector<Word> words;
 
     virtual bool for_each(xml_node& node) {
         if (node.type() == node_element) {
             if (node.name() == "w"s) {
+                Word word {
+                    node.attribute("hw").value(),
+                    node.attribute("c5").value(),
+                    node.attribute("pos").value(),
+                };
+                words.push_back(word);
                 ++w;
             } else if (node.name() == "c"s) {
                 ++c;
@@ -348,6 +377,11 @@ private:
             "(fileid, n, settingid, personid, n_w, n_c, n_unclear, n_vocal, n_gap)"
             "VALUES (?,?,?,?,?,?,?,?,?)"
         );
+        DbStmt stmt_w = db.prepare(
+            "INSERT INTO bnc_w "
+            "(fileid, n, settingid, wordid, personid, hw, c5, pos)"
+            "VALUES (?,?,?,?,?,?,?,?)"
+        );
         for (const auto& t : s_tags) {
             const auto& wc = std::get<3>(t);
             stmt.bind(stem);
@@ -360,6 +394,17 @@ private:
             stmt.bind(wc.vocal);
             stmt.bind(wc.gap);
             stmt.exec();
+            for (int i = 0; i < wc.words.size(); ++i) {
+                stmt_w.bind(stem);
+                stmt_w.bind(std::get<0>(t));
+                stmt_w.bind(std::get<1>(t));
+                stmt_w.bind(i);
+                stmt_w.bind(std::get<2>(t));
+                stmt_w.bind(wc.words[i].hw);
+                stmt_w.bind(wc.words[i].c5);
+                stmt_w.bind(wc.words[i].pos);
+                stmt_w.exec();
+            }
         }
     }
 
